@@ -1,0 +1,108 @@
+name: Deploy App to Server Environment
+
+on:
+  workflow_call:
+    inputs:
+      deploy_env:
+        type: string
+        required: true
+
+      docker_image_tag:
+        type: string
+        required: true
+
+      docker_repository:
+        type: string
+        required: true
+
+      ssh_port:
+        type: number
+        required: false
+        default: 22
+
+      common_pipelines_repo_ref:
+        type: string
+        required: true
+
+    secrets:
+      DOCKERHUB_USERNAME:
+        required: true
+      DOCKERHUB_TOKEN:
+        required: true
+      SSH_PRIVATE_KEY:
+        required: true
+      SERVER_HOST:
+        required: true
+      SERVER_USERNAME:
+        required: true
+      SERVER_PATH:
+        required: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Git checkout
+        uses: actions/checkout@v5
+
+      - name: Validate required inputs are not empty
+        shell: bash
+        run: |
+          set -euo pipefail
+          
+          if [[ -z "${{ inputs.deploy_env }}" ]]; then
+          echo "::error::Input 'deploy_env' is empty."
+          exit 1
+          fi
+          
+          if [[ -z "${{ inputs.docker_repository }}" ]]; then
+          echo "::error::Input 'docker_repository' is empty."
+          exit 1
+          fi
+          
+          if [[ -z "${{ inputs.docker_image_tag }}" ]]; then
+          echo "::error::Input 'docker_image_tag' is empty."
+          exit 1
+          fi
+
+      - name: Git checkout
+        uses: actions/checkout@v5
+        with:
+          repository: common-pipelines-base-hub/common-pipelines
+          ref: ${{ inputs.common_pipelines_repo_ref }}
+          path: common-pipelines
+
+      - id: create_ssh_key
+        name: Create SSH key
+        uses: ./common-pipelines/.github/actions/create-ssh-key
+        with:
+          ssh_private_key: ${{ secrets.SSH_PRIVATE_KEY }}
+          server_host: ${{ secrets.SERVER_HOST }}
+
+      - name: Copy Docker compose to the server
+        run: |
+          scp -i ~/.ssh/id_rsa docker-compose.yml "${{ secrets.SERVER_USERNAME }}"@"${{ secrets.SERVER_HOST }}":"${{ secrets.SERVER_PATH }}"
+
+      - name: Login to Docker on the server
+        run: |
+          echo "${{ secrets.DOCKERHUB_TOKEN }}" | ssh -i ~/.ssh/id_rsa "${{ secrets.SERVER_USERNAME }}"@"${{ secrets.SERVER_HOST }}" \
+            "docker login -u ${{ secrets.DOCKERHUB_USERNAME }} --password-stdin"
+
+      - name: Deploy to server Environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Start deployment action."
+          echo "DOCKER_IMAGE_REPOSITORY: '${{ inputs.docker_repository }}'."
+          echo "DOCKER_IMAGE_TAG: '${{ inputs.docker_image_tag }}'."
+          echo "SERVER_PATH: '${{ secrets.SERVER_PATH }}'."
+          echo "ENV: '${{ inputs.deploy_env }}'."
+          DOCKER_IMAGE_ID="${{ secrets.DOCKERHUB_USERNAME }}/${{ inputs.docker_repository }}:${{ inputs.docker_image_tag }}"
+          echo "DOCKER_IMAGE_ID: '$DOCKER_IMAGE_ID'."
+          ssh -i ~/.ssh/id_rsa "${{ secrets.SERVER_USERNAME }}"@"${{ secrets.server_host }}" \
+          "cd ${{ secrets.SERVER_PATH }} && export DOCKER_IMAGE_ID=$DOCKER_IMAGE_ID && export ENV=${{ inputs.deploy_env }} && docker compose pull && docker compose up --remove-orphans -d"
+          echo "End of executing docker compose on the remote server"

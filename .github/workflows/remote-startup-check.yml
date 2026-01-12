@@ -1,0 +1,128 @@
+name: Remote app startup check (SSH + Docker logs)
+
+on:
+  workflow_call:
+    inputs:
+      container_name:
+        type: string
+        required: true
+
+      ssh_port:
+        type: number
+        required: false
+        default: 22
+
+      max_retries:
+        type: number
+        required: false
+        default: 10
+
+      retry_interval:
+        type: number
+        required: false
+        default: 10
+
+      # Use:
+      # - "12" (default) -> tail last 12 lines on failure/timeout
+      # - "all" or "full" or "0" -> print full logs on failure/timeout
+      log_lines:
+        type: string
+        description: "'all' or 'full' or '0' -> print full logs on failure/timeout"
+        required: false
+        default: "12"
+
+      # Match strings (grep -F)
+      failure_grep:
+        type: string
+        required: false
+        default: "APPLICATION FAILED TO START"
+
+      success_grep:
+        type: string
+        required: false
+        default: "Started EduTrainerApplication in"
+
+      # Safety: set to false if you cannot maintain known_hosts (not recommended)
+      strict_host_key_checking:
+        type: boolean
+        required: false
+        default: true
+      common_pipelines_repo_ref:
+        type: string
+        required: true
+
+    secrets:
+      SSH_PRIVATE_KEY:
+        required: true
+      SERVER_HOST:
+        required: true
+      SERVER_USERNAME:
+        required: true
+      SERVER_PATH:
+        required: true
+
+jobs:
+  startup_check:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Git checkout
+        uses: actions/checkout@v5
+#        with:
+#          repository: common-pipelines-base-hub/common-pipelines
+#          ref: ${{ inputs.common_pipelines_repo_ref }}
+#          path: common-pipelines
+#          fetch-depth: 1
+#          sparse-checkout: |
+#            .github/scripts/remote_startup_check.sh
+#          sparse-checkout-cone-mode: false
+        with:
+          repository: common-pipelines-base-hub/common-pipelines
+          ref: ${{ inputs.common_pipelines_repo_ref }}
+          path: common-pipelines
+
+      - id: create_ssh_key
+        name: Create SSH key
+        uses: ./common-pipelines/.github/actions/create-ssh-key
+        with:
+          ssh_private_key: ${{ secrets.SSH_PRIVATE_KEY }}
+          server_host: ${{ secrets.server_host }}
+
+      - id: startup_check-ca
+        name: App startup check CA
+        uses: ./common-pipelines/.github/actions/remote-startup-check
+        with:
+          container_name: ${{ inputs.container_name }}
+          log_lines: ${{ inputs.log_lines }}
+          success_grep: ${{ inputs.success_grep }}
+          failure_grep: ${{ inputs.failure_grep }}
+          max_retries: ${{ inputs.max_retries }}
+          retry_interval: ${{ inputs.retry_interval }}
+          server_host: ${{ secrets.SERVER_HOST }}
+          server_username: ${{ secrets.SERVER_USERNAME }}
+          server_path: ${{ secrets.SERVER_PATH }}
+
+      - name: Check for application startup status with retries
+        shell: bash
+        run: |
+          set -euo pipefail
+          
+          echo "Current directory:"
+          pwd
+
+          bash common-pipelines/.github/scripts/remote_startup_check.sh \
+            --ssh-user "${{ secrets.SERVER_USERNAME }}" \
+            --ssh-host "${{ secrets.SERVER_HOST }}" \
+            --ssh-port "${{ inputs.ssh_port }}" \
+            --ssh-key "$HOME/.ssh/id_rsa" \
+            --server-path "${{ secrets.SERVER_PATH }}" \
+            --container-name "${{ inputs.container_name }}" \
+            --max-retries "${{ inputs.max_retries }}" \
+            --retry-interval "${{ inputs.retry_interval }}" \
+            --log-lines "${{ inputs.log_lines }}" \
+            --failure-grep "${{ inputs.failure_grep }}" \
+            --success-grep "${{ inputs.success_grep }}" \
+            --strict-host-key-checking "${{ inputs.strict_host_key_checking }}"

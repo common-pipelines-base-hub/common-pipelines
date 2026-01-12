@@ -1,0 +1,87 @@
+name: Remote app startup check composite action (SSH + Docker logs)
+
+inputs:
+  container_name:
+    type: string
+    required: true
+
+  ssh_port:
+    type: number
+    required: false
+    default: 22
+
+  max_retries:
+    type: number
+    required: false
+    default: 10
+
+  retry_interval:
+    type: number
+    required: false
+    default: 10
+
+  # Use:
+  # - "12" (default) -> tail last 12 lines on failure/timeout
+  # - "all" or "full" or "0" -> print full logs on failure/timeout
+  log_lines:
+    type: string
+    required: false
+    description: "'all' or 'full' or '0' -> print full logs on failure/timeout"
+    default: "12"
+
+  # Match strings (grep -F)
+  failure_grep:
+    type: string
+    required: false
+    default: "APPLICATION FAILED TO START"
+
+  success_grep:
+    type: string
+    required: false
+    default: "Started EduTrainerApplication in"
+
+  # Safety: set to false if you cannot maintain known_hosts (not recommended)
+  strict_host_key_checking:
+    type: boolean
+    required: false
+    default: true
+
+  server_host:
+    type: string
+    required: true
+
+  server_username:
+    type: string
+    required: true
+
+  server_path:
+    type: string
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+
+    - name: Check for application startup status with retries
+      shell: bash
+      run: |
+        set -euo pipefail
+        
+        echo "Caller workspace: $GITHUB_WORKSPACE"
+        echo "Action path:     ${{ github.action_path }}"
+
+        chmod +x "${{ github.action_path }}/remote_startup_check.sh"
+
+        ${{ github.action_path }}/remote_startup_check.sh \
+          --ssh-user "${{ inputs.server_username }}" \
+          --ssh-host "${{ inputs.server_host }}" \
+          --ssh-port "${{ inputs.ssh_port }}" \
+          --ssh-key "$HOME/.ssh/id_rsa" \
+          --server-path "${{ inputs.server_path }}" \
+          --container-name "${{ inputs.container_name }}" \
+          --max-retries "${{ inputs.max_retries }}" \
+          --retry-interval "${{ inputs.retry_interval }}" \
+          --log-lines "${{ inputs.log_lines }}" \
+          --failure-grep "${{ inputs.failure_grep }}" \
+          --success-grep "${{ inputs.success_grep }}" \
+          --strict-host-key-checking "${{ inputs.strict_host_key_checking }}"

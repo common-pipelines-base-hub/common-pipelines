@@ -1,0 +1,48 @@
+name: Create SSH key
+
+inputs:
+  ssh_port:
+    type: number
+    required: false
+    default: 22
+  # Safety: set to false if you cannot maintain known_hosts (not recommended)
+  strict_host_key_checking:
+    type: boolean
+    required: false
+    default: true
+  ssh_private_key:
+    type: string
+    required: true
+  server_host:
+    type: string
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Prepare SSH key and known_hosts
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        echo "Create directory for SSH keys."
+        mkdir -p ~/.ssh
+
+        echo "Change permissions for SSH keys directory."
+        chmod 700 ~/.ssh
+
+        # Write private key safely
+        echo "Write private key to SSH keys directory."
+        printf '%s' '${{ inputs.ssh_private_key }}' > ~/.ssh/id_rsa
+
+        echo "Change permissions for private key."
+        chmod 400 ~/.ssh/id_rsa
+
+        # Populate known_hosts for the target host (recommended)
+        echo "Populate known_hosts for the target host."
+        if [[ "${{ inputs.strict_host_key_checking }}" == "true" ]]; then
+          ssh-keyscan -p "${{ inputs.ssh_port }}" "${{ inputs.server_host }}" >> ~/.ssh/known_hosts
+
+          echo "Change permissions for known_hosts."
+          chmod 644 ~/.ssh/known_hosts
+        fi

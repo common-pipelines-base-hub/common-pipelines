@@ -1,0 +1,121 @@
+name: Validate PR commit (logging + branch & title validation)
+
+on:
+  workflow_call:
+    inputs:
+      base_branch:
+        description: "Allowed PR target branch"
+        required: false
+        type: string
+        default: "develop"
+
+      source_branch_regex:
+        description: "Regex for PR source branch name validation"
+        required: false
+        type: string
+        default: "^(feature|bugfix|hotfix|release)/GH-[0-9]+-.*$"
+
+      semantic_types:
+        description: "Allowed Conventional Commit types for PR title"
+        required: false
+        type: string
+        default: |
+          feat
+          fix
+          chore
+          docs
+          test
+          style
+          refactor
+          perf
+          build
+          ci
+          revert
+          release
+
+      subject_pattern:
+        description: "Regex for PR title subject part"
+        required: false
+        type: string
+        default: "^GH-[0-9]+ - .+$"
+
+      subject_pattern_error:
+        description: "Error message shown when PR title does not match the rules"
+        required: false
+        type: string
+        default: 'The commit message must follow the format: "<type>: GH-1234 - description" where type is one of feat, fix, ci, refactor, etc. OR ❌ PR-title mismatch. Please make your PR title identical to your commit message.'
+
+      validate_single_commit:
+        description: "Require PR to have exactly one commit"
+        required: false
+        type: boolean
+        default: true
+
+      validate_single_commit_matches_pr_title:
+        description: "Require the single commit title to match the PR title"
+        required: false
+        type: boolean
+        default: true
+
+    secrets:
+      wf_github_token:
+        required: true
+
+jobs:
+  validate_pr_commit:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Logging
+        shell: bash
+        run: |
+          echo "Event: '${{ github.event_name }}'"
+          echo "Branch ref: '${{ github.ref }}'"
+          echo "Commit hash: '${{ github.sha }}'"
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo "Source Branch: '${{ github.event.pull_request.head.ref }}'"
+            echo "Target Branch: '${{ github.event.pull_request.base.ref }}'"
+          fi
+
+      - name: Filter branches, events and target branch
+        shell: bash
+        run: |
+          echo "Validate event name"
+          if [[ "${{ github.event_name }}" != "pull_request" ]]; then
+            echo "::error:: Not supported event"
+            exit 1
+          fi
+
+          echo "Validate PR base branch"
+          if [[ "${{ github.event.pull_request.base.ref }}" != "${{ inputs.base_branch }}" ]]; then
+            echo "::error:: Not supported base branch"
+            exit 1
+          fi
+          echo "Valid pull request to '${{ inputs.base_branch }}' branch"
+
+      - name: Validate PR source branch naming convention
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          PR_HEAD_REF="${{ github.event.pull_request.head.ref }}"
+          echo "PR source branch: '$PR_HEAD_REF'"
+
+          SOURCE_BRANCH_REGEX="${{ inputs.source_branch_regex }}"
+
+          # Check if branch name follows the required pattern
+          if ! [[ "$PR_HEAD_REF" =~ $SOURCE_BRANCH_REGEX ]]; then
+            echo "::error:: Invalid branch name format. Branch names should follow the pattern: feature/GH-1234-description, bugfix/GH-1234-description, hotfix/GH-1234-description, or release/GH-1234-description"
+            exit 1
+          fi
+
+      - name: Validate PR commit title meets commit convention
+        if: github.event_name == 'pull_request'
+        uses: amannn/action-semantic-pull-request@v4.5.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.wf_github_token }}
+        with:
+          types: ${{ inputs.semantic_types }}
+          subjectPattern: ${{ inputs.subject_pattern }}
+          subjectPatternError: ${{ inputs.subject_pattern_error }}
+          validateSingleCommit: ${{ inputs.validate_single_commit }}
+          validateSingleCommitMatchesPrTitle: ${{ inputs.validate_single_commit_matches_pr_title }}

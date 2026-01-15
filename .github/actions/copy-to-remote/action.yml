@@ -1,0 +1,106 @@
+name: Copy to Remote Server
+description: Copy a file or directory contents to a remote server over SSH/SCP (creates target directory if missing)
+
+inputs:
+  source_path:
+    description: Local path to copy. If it is a directory, its CONTENTS will be copied.
+    required: true
+
+  server_host:
+    description: Remote server host (DNS or IP)
+    required: true
+
+  server_username:
+    description: Remote server username
+    required: true
+
+  server_path:
+    description: Remote target directory path (will be created if missing)
+    required: true
+
+  ssh_key_path:
+    description: Private key path on the runner
+    required: false
+    default: "~/.ssh/id_rsa"
+
+  ssh_port:
+    description: SSH port
+    required: false
+    default: "22"
+
+runs:
+  using: composite
+  steps:
+    - name: Git checkout
+      uses: actions/checkout@v5
+
+    - name: Validate inputs
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        if [[ -z "${{ inputs.source_path }}" ]]; then
+          echo "::error::source_path is empty"
+          exit 1
+        fi
+        if [[ -z "${{ inputs.server_host }}" ]]; then
+          echo "::error::server_host is empty"
+          exit 1
+        fi
+        if [[ -z "${{ inputs.server_username }}" ]]; then
+          echo "::error::server_username is empty"
+          exit 1
+        fi
+        if [[ -z "${{ inputs.server_path }}" ]]; then
+          echo "::error::server_path is empty"
+          exit 1
+        fi
+
+    - name: Copy to Remote Server
+      shell: bash
+      run: |
+        set -euo pipefail
+        
+        echo "Copy in"
+        
+        raw_key_path="${{ inputs.ssh_key_path }}"
+
+        # Show what we actually got (reveals hidden quotes/spaces too)
+        echo "DEBUG raw_key_path=$(printf '%q' "$raw_key_path")"
+        
+        if [[ "$raw_key_path" == "~" ]]; then
+        key_path="$HOME"
+        elif [[ "$raw_key_path" == "~/"* ]]; then
+        key_path="$HOME/${raw_key_path:2}"   # drop leading "~/"
+        else
+        key_path="$raw_key_path"
+        fi
+        
+        echo "DEBUG key_path=$(printf '%q' "$key_path")"
+
+        if [[ ! -f "$key_path" ]]; then
+          echo "::error::SSH key not found at: $key_path"
+          exit 1
+        fi
+
+        src="${{ inputs.source_path }}"
+        if [[ ! -e "$src" ]]; then
+          echo "::error::source_path does not exist: $src"
+          exit 1
+        fi
+
+        remote="${{ inputs.server_username }}@${{ inputs.server_host }}"
+        remote_dir="${{ inputs.server_path }}"
+        port="${{ inputs.ssh_port }}"
+
+        echo "Ensuring remote directory exists: $remote_dir"
+        ssh -i "$key_path" -p "$port" "$remote" "set -e; mkdir -p -- '$remote_dir'"
+
+        echo "Copying '$src' to '$remote:$remote_dir/'"
+        if [[ -d "$src" ]]; then
+          # Copy directory contents (equivalent to your old .../server/* but safe and quote-friendly)
+          scp -i "$key_path" -P "$port" -r "$src"/. "$remote:$remote_dir/"
+        else
+          # Copy single file
+          scp -i "$key_path" -P "$port" "$src" "$remote:$remote_dir/"
+        fi

@@ -1,0 +1,132 @@
+name: Gradle - build, test, version, publish jar
+
+on:
+  workflow_call:
+    inputs:
+      java_version:
+        description: "JDK version"
+        type: string
+        required: false
+        default: "21"
+
+      java_distribution:
+        description: "JDK distribution (e.g. zulu, temurin)"
+        type: string
+        required: false
+        default: "zulu"
+
+      gradle_build_command:
+        description: "Gradle command to run (tests included in 'build')"
+        type: string
+        required: false
+        default: "./gradlew --no-daemon --stacktrace clean build"
+
+      jar_path_pattern:
+        description: "Path pattern to locate built jar(s)"
+        type: string
+        required: false
+        default: "build/libs/*.jar"
+
+      upload_github_artifact:
+        description: "Upload jar to GitHub artifacts"
+        type: boolean
+        required: false
+        default: true
+
+      github_artifact_name:
+        description: "GitHub artifact name"
+        type: string
+        required: false
+        default: "app.jar"
+
+      github_artifact_retention_days:
+        description: "GitHub artifact retention days (min 1)"
+        type: number
+        required: false
+        default: 1
+
+    outputs:
+      project_version:
+        description: "Detected Gradle project version"
+        value: ${{ jobs.build.outputs.project_version }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+
+    outputs:
+      project_version: ${{ steps.gradle_project_version.outputs.project_version }}
+
+    steps:
+      - name: Git checkout
+        uses: actions/checkout@v5
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ inputs.java_version }}
+          distribution: ${{ inputs.java_distribution }}
+          cache: gradle
+
+      - name: Extract Gradle project version (printVersion with fallback)
+        id: gradle_project_version
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+
+          PROJECT_VERSION=""
+          echo "Trying: ./gradlew -q printVersion"
+          set +e
+          PROJECT_VERSION="$(./gradlew -q printVersion 2>/dev/null)"
+          PRINT_STATUS=$?
+          set -e
+
+          if [[ $PRINT_STATUS -ne 0 || -z "${PROJECT_VERSION}" || "${PROJECT_VERSION}" == "unspecified" ]]; then
+            echo "printVersion failed/missing/invalid. Falling back to: ./gradlew -q properties"
+            PROJECT_VERSION="$(./gradlew -q properties --console=plain | sed -n 's/^version: //p' | head -n 1)"
+          fi
+
+          if [[ -z "${PROJECT_VERSION}" || "${PROJECT_VERSION}" == "unspecified" ]]; then
+            echo "::error::Gradle project version is empty/unspecified. Set 'version' in build.gradle or gradle.properties."
+            exit 1
+          fi
+
+          echo "Extracted Gradle project version: $PROJECT_VERSION"
+          echo "PROJECT_VERSION=$PROJECT_VERSION" >> "$GITHUB_ENV"
+          echo "project_version=$PROJECT_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build + test with Gradle
+        run: |
+          set -euo pipefail
+          ${{ inputs.gradle_build_command }}
+
+
+      - name: Copy jar to stable name for next jobs
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Pick the main jar (exclude common secondary jars)
+          JAR_PATH="$(ls -1 ${{ inputs.jar_path_pattern }} 2>/dev/null | grep -vE '(sources|javadoc|plain)\.jar$' | head -n 1 || true)"
+
+          if [[ -z "${JAR_PATH}" ]]; then
+            echo "ERROR: No jar found by jar_path_pattern='${{ inputs.jar_path_pattern }}'"
+            exit 1
+          fi
+
+          echo "Found jar: ${JAR_PATH}"
+          cp -f "${JAR_PATH}" "build/libs/${{ inputs.github_artifact_name }}"
+          ls -lah "build/libs/${{ inputs.github_artifact_name }}"
+
+      - name: Upload jar as GitHub Actions artifact with retention
+        id: upload_github_artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.github_artifact_name }}
+          path: build/libs/${{ inputs.github_artifact_name }}
+          if-no-files-found: error
+          retention-days: ${{ inputs.github_artifact_retention_days }}
+          overwrite: true

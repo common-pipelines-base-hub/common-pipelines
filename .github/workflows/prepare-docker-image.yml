@@ -1,0 +1,122 @@
+name: Prepare Docker image
+
+on:
+  workflow_call:
+    inputs:
+      github_artifact_name:
+        type: string
+        required: false
+        default: "app.jar"
+
+      jar_destination_path:
+        type: string
+        required: false
+        default: "build/libs"
+
+      docker_image_tag:
+        type: string
+        required: true
+
+      docker_repository:
+        type: string
+        required: true
+
+      platforms:
+        type: string
+        required: false
+        default: "linux/amd64,linux/arm64"
+
+      dockerfile:
+        type: string
+        required: false
+        default: "Dockerfile"
+
+      docker_push:
+        type: boolean
+        required: false
+        default: true
+
+    secrets:
+      DOCKERHUB_USERNAME:
+        required: true
+      DOCKERHUB_TOKEN:
+        required: true
+
+jobs:
+  docker_build_push:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Git checkout
+        uses: actions/checkout@v5
+
+      - name: Prepare build folder
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Creating build folder: ${{ inputs.jar_destination_path }}"
+          DEST="${{ inputs.jar_destination_path }}"
+          mkdir -p "$DEST"
+          echo "Created: $DEST"
+          ls -lah "$DEST"
+
+      - name: Download jar artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.github_artifact_name }}
+          path: ${{ inputs.jar_destination_path }}
+
+      - name: Check build/libs
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Checking build/libs folder: ${{ inputs.jar_destination_path }}"
+          DEST="${{ inputs.jar_destination_path }}"
+          ls -lah "$DEST"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build Docker image
+        if: inputs.docker_push == false
+        run: |
+          set -euo pipefail
+          echo "Building and pushing Docker image: ${{ inputs.docker_image_tag }}"
+          echo "Platform: ${{ inputs.platforms }}"
+          
+          DOCKER_IMAGE_ID="${{ secrets.DOCKERHUB_USERNAME }}/${{ inputs.docker_repository }}:${{ inputs.docker_image_tag }}"
+
+          echo "Building and pushing Docker image: $DOCKER_IMAGE_ID"
+          docker buildx build \
+            --platform "${{ inputs.platforms }}" \
+            --file "${{ inputs.dockerfile }}" \
+            --tag "$DOCKER_IMAGE_ID" \
+            .
+
+      - name: Build and push Docker image
+        if: inputs.docker_push == true
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Building and pushing Docker image: ${{ inputs.docker_image_tag }}"
+          echo "Platform: ${{ inputs.platforms }}"
+          
+          DOCKER_IMAGE_ID="${{ secrets.DOCKERHUB_USERNAME }}/${{ inputs.docker_repository }}:${{ inputs.docker_image_tag }}"
+
+          echo "Building and pushing Docker image: $DOCKER_IMAGE_ID"
+          
+          docker buildx build \
+            --platform ${{ inputs.platforms }} \
+            --file "${{ inputs.dockerfile }}" \
+            --tag "$DOCKER_IMAGE_ID" \
+            --push \
+            .

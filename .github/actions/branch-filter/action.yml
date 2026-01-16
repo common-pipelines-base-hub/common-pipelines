@@ -1,0 +1,81 @@
+name: Branch filter
+description: Fail the workflow if the current ref is not one of the allowed branches.
+
+inputs:
+  allowed_branches:
+    description: |
+      Allowed branch names. Provide as multiline (recommended) or comma-separated.
+      Examples:
+        main
+        deployment
+      or:
+        main,deployment
+    required: false
+    default: |
+      main
+      deployment
+
+  disable_branch_filter:
+    description: "If 'true' (or 1/yes), the check is skipped."
+    required: false
+    default: "false"
+
+  error_message:
+    description: "Error message when branch is not allowed."
+    required: false
+    default: "Not supported branch"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Branch filter
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        # Inputs are strings in actions; normalize disable flag
+        disable="${{ inputs.disable_branch_filter }}"
+        disable="$(printf '%s' "$disable" | tr '[:upper:]' '[:lower:]' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+        if [[ "$disable" == "true" || "$disable" == "1" || "$disable" == "yes" ]]; then
+          echo "Branch filter is disabled; skipping."
+          exit 0
+        fi
+
+        # Detect branch name for push/PR runs:
+        # - push:   GITHUB_REF=refs/heads/<branch>
+        # - PR:     GITHUB_HEAD_REF=<source-branch> (GITHUB_REF is refs/pull/...)
+        ref="${GITHUB_REF:-}"
+        branch=""
+        if [[ "$ref" == refs/heads/* ]]; then
+          branch="${ref#refs/heads/}"
+        elif [[ -n "${GITHUB_HEAD_REF:-}" ]]; then
+          branch="${GITHUB_HEAD_REF}"
+        else
+          echo "::error::Cannot determine branch name. GITHUB_REF='$ref'"
+          exit 1
+        fi
+
+        # Normalize allowed branches: support multiline and comma-separated
+        allowed_raw="${{ inputs.allowed_branches }}"
+        allowed_raw="${allowed_raw//,/$'\n'}"
+
+        ok="0"
+        while IFS= read -r line; do
+          # trim
+          b="$(printf '%s' "$line" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+          [[ -z "$b" ]] && continue
+          b="${b#refs/heads/}"
+          if [[ "$branch" == "$b" ]]; then
+            ok="1"
+            break
+          fi
+        done <<< "$allowed_raw"
+
+        if [[ "$ok" != "1" ]]; then
+          # compact view of allowed list for error output
+          allowed_one_line="$(printf '%s' "$allowed_raw" | sed -e '/^[[:space:]]*$/d' | paste -sd ',' -)"
+          echo "::error::${{ inputs.error_message }} (branch='$branch', allowed='$allowed_one_line')"
+          exit 1
+        fi
+
+        echo "Branch '$branch' is allowed."

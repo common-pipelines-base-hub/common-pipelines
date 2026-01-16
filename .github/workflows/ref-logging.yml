@@ -1,0 +1,28 @@
+name: Ref logging
+
+on:
+  workflow_call:
+    inputs:
+      common_pipelines_repo_ref:
+        type: string
+        required: true
+
+jobs:
+  ref_logging:
+    name: Ref logging
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Git checkout
+        uses: actions/checkout@v5
+        with:
+          repository: common-pipelines-base-hub/common-pipelines
+          ref: ${{ inputs.common_pipelines_repo_ref }}
+          path: common-pipelines
+
+      - id: ref_logging
+        name: Ref logging
+        uses: ./common-pipelines/.github/actions/ref-logging

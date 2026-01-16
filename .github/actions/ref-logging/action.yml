@@ -1,0 +1,18 @@
+name: Ref logging
+
+runs:
+  using: "composite"
+  steps:
+    - name: Ref logging
+      shell: bash
+      run: |
+        echo "Event: '${{ github.event_name }}'"
+        echo "Branch ref: '${{ github.ref }}'"
+        echo "Commit hash: '${{ github.sha }}'"
+        BRANCH_REF="${{ github.ref }}"
+        BRANCH_NAME=${BRANCH_REF#refs/heads/}
+        echo "Branch: '${BRANCH_NAME}'"
+        if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+          echo "Source Branch: '${{ github.event.pull_request.head.ref }}'"
+          echo "Target Branch: '${{ github.event.pull_request.base.ref }}'"
+        fi

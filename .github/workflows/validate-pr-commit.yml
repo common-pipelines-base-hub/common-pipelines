@@ -3,6 +3,10 @@ name: Validate PR commit (logging + branch & title validation)
 on:
   workflow_call:
     inputs:
+      common_pipelines_repo_ref:
+        type: string
+        required: true
+
       base_branch:
         description: "Allowed PR target branch"
         required: false
@@ -66,16 +70,16 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Logging
-        shell: bash
-        run: |
-          echo "Event: '${{ github.event_name }}'"
-          echo "Branch ref: '${{ github.ref }}'"
-          echo "Commit hash: '${{ github.sha }}'"
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            echo "Source Branch: '${{ github.event.pull_request.head.ref }}'"
-            echo "Target Branch: '${{ github.event.pull_request.base.ref }}'"
-          fi
+      - name: Git checkout
+        uses: actions/checkout@v5
+        with:
+          repository: common-pipelines-base-hub/common-pipelines
+          ref: ${{ inputs.common_pipelines_repo_ref }}
+          path: common-pipelines
+
+      - id: logging
+        name: Logging
+        uses: ./common-pipelines/.github/actions/ref-logging
 
       - name: Filter branches, events and target branch
         shell: bash

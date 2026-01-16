@@ -1,0 +1,58 @@
+name: Branch filter
+
+on:
+  workflow_call:
+    inputs:
+      common_pipelines_repo_ref:
+        type: string
+        required: true
+
+      allowed_branches:
+        type: string
+        description: |
+          Allowed branch names. Provide as multiline (recommended) or comma-separated.
+          Examples:
+            main
+            deployment
+          or:
+            main,deployment
+        required: false
+        default: |
+          main
+          deployment
+
+      disable_branch_filter:
+        type: boolean
+        description: "If 'true', the check is skipped."
+        required: false
+        default: false
+
+      error_message:
+        type: string
+        description: "Error message when branch is not allowed."
+        required: false
+        default: "Not supported branch"
+
+jobs:
+  branch_filter:
+    name: Branch filter
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Git checkout
+        uses: actions/checkout@v5
+        with:
+          repository: common-pipelines-base-hub/common-pipelines
+          ref: ${{ inputs.common_pipelines_repo_ref }}
+          path: common-pipelines
+
+      - id: branch_filter
+        name: Branch filter
+        uses: ./common-pipelines/.github/actions/branch-filter
+        with:
+          allowed_branches: ${{ inputs.allowed_branches }}
+          disable_branch_filter: ${{ inputs.disable_branch_filter }}
+          error_message: ${{ inputs.error_message }}

@@ -1,0 +1,142 @@
+name: Maven - build, test, version, publish jar
+
+on:
+  workflow_call:
+    inputs:
+      java_version:
+        description: "JDK version"
+        type: string
+        required: false
+        default: "21"
+
+      java_distribution:
+        description: "JDK distribution (e.g. zulu, temurin)"
+        type: string
+        required: false
+        default: "zulu"
+
+      maven_build_command:
+        description: "Maven command to run (tests included in 'verify')"
+        type: string
+        required: false
+        default: "mvn -B -ntp --no-transfer-progress clean verify"
+
+      jar_path_pattern:
+        description: "Path pattern to locate built jar(s)"
+        type: string
+        required: false
+        default: "target/*.jar"
+
+      upload_github_artifact:
+        description: "Upload jar to GitHub artifacts"
+        type: boolean
+        required: false
+        default: true
+
+      github_artifact_name:
+        description: "GitHub artifact name (stable jar name for next jobs)"
+        type: string
+        required: false
+        default: "app.jar"
+
+      github_artifact_retention_days:
+        description: "GitHub artifact retention days (min 1)"
+        type: number
+        required: false
+        default: 1
+
+    outputs:
+      project_version:
+        description: "Detected Maven project version"
+        value: ${{ jobs.build.outputs.project_version }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+
+    outputs:
+      project_version: ${{ steps.maven_project_version.outputs.project_version }}
+
+    steps:
+      - name: Git checkout
+        uses: actions/checkout@v5
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ inputs.java_version }}
+          distribution: ${{ inputs.java_distribution }}
+          cache: maven
+
+      - name: Extract Maven project version (help:evaluate with fallback)
+        id: maven_project_version
+        run: |
+          set -euo pipefail
+
+          MVN_CMD="mvn"
+          if [[ -x "./mvnw" ]]; then
+            MVN_CMD="./mvnw"
+            chmod +x ./mvnw
+          fi
+
+          PROJECT_VERSION=""
+
+          echo "Trying: maven-help-plugin:evaluate (forceStdout)"
+          set +e
+          PROJECT_VERSION="$($MVN_CMD -q -DforceStdout org.apache.maven.plugins:maven-help-plugin:3.5.1:evaluate -Dexpression=project.version 2>/dev/null | tr -d '\r' | tail -n 1)"
+          EVAL_STATUS=$?
+          set -e
+
+          if [[ $EVAL_STATUS -ne 0 || -z "${PROJECT_VERSION}" || "${PROJECT_VERSION}" == "null" ]]; then
+            echo "help:evaluate failed/empty. Falling back to: help:evaluate (default plugin resolution)"
+            PROJECT_VERSION="$($MVN_CMD -q -DforceStdout help:evaluate -Dexpression=project.version 2>/dev/null | tr -d '\r' | tail -n 1 || true)"
+          fi
+
+          if [[ -z "${PROJECT_VERSION}" || "${PROJECT_VERSION}" == "null" ]]; then
+            echo "::error::Maven project version is empty. Ensure <version> is set (or inherited) in pom.xml."
+            exit 1
+          fi
+
+          echo "Extracted Maven project version: $PROJECT_VERSION"
+          echo "PROJECT_VERSION=$PROJECT_VERSION" >> "$GITHUB_ENV"
+          echo "project_version=$PROJECT_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build + test with Maven
+        run: |
+          set -euo pipefail
+          ${{ inputs.maven_build_command }}
+
+      - name: Copy jar to stable name for next jobs
+        run: |
+          set -euo pipefail
+
+          # Pick the main jar (exclude common secondary jars)
+          # Spring Boot Maven Plugin can produce an extra original jar (e.g., original-*.jar or *.jar.original), so we exclude those too.
+          JAR_PATH="$(ls -1 ${{ inputs.jar_path_pattern }} 2>/dev/null \
+            | grep -vE '(-sources|-javadoc|-tests|-test-fixtures)\.jar$|(^|/)(original-.*)\.jar$|\.jar\.original$' \
+            | head -n 1 || true)"
+
+          if [[ -z "${JAR_PATH}" ]]; then
+            echo "ERROR: No jar found by jar_path_pattern='${{ inputs.jar_path_pattern }}'"
+            echo "DEBUG: Listing candidate jars:"
+            ls -la target 2>/dev/null || true
+            exit 1
+          fi
+
+          echo "Found jar: ${JAR_PATH}"
+          mkdir -p target
+          cp -f "${JAR_PATH}" "target/${{ inputs.github_artifact_name }}"
+          ls -lah "target/${{ inputs.github_artifact_name }}"
+
+      - name: Upload jar as GitHub Actions artifact with retention
+        if: ${{ inputs.upload_github_artifact }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.github_artifact_name }}
+          path: target/${{ inputs.github_artifact_name }}
+          if-no-files-found: error
+          retention-days: ${{ inputs.github_artifact_retention_days }}
+          overwrite: true

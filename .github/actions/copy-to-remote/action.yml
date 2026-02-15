@@ -28,6 +28,11 @@ inputs:
     required: false
     default: "22"
 
+  target_file_name:
+    description: Optional. If source_path is a file, copy it to this name in server_path directory.
+    required: false
+    default: ""
+
 runs:
   using: composite
   steps:
@@ -84,6 +89,8 @@ runs:
         fi
 
         src="${{ inputs.source_path }}"
+        echo "DEBUG source_path=$(printf '%q' "$src")"
+
         if [[ ! -e "$src" ]]; then
           echo "::error::source_path does not exist: $src"
           exit 1
@@ -92,15 +99,33 @@ runs:
         remote="${{ inputs.server_username }}@${{ inputs.server_host }}"
         remote_dir="${{ inputs.server_path }}"
         port="${{ inputs.ssh_port }}"
+        target_name="${{ inputs.target_file_name }}"
 
-        echo "Ensuring remote directory exists: $remote_dir"
+        # Prevent obvious footguns / path traversal for target_file_name
+        if [[ -n "$target_name" ]]; then
+          if [[ "$target_name" == "." || "$target_name" == ".." ]]; then
+            echo "::error::target_file_name must be a normal filename, not '.' or '..'"
+            exit 1
+          fi
+          if [[ "$target_name" == *"/"* ]]; then
+            echo "::error::target_file_name must not contain '/'. Provide only a filename."
+            exit 1
+          fi
+        fi
+
+        echo "Ensuring remote directory exists: $(printf '%q' "$remote_dir")"
         ssh -i "$key_path" -p "$port" "$remote" "set -e; mkdir -p -- '$remote_dir'"
 
         echo "Copying '$src' to '$remote:$remote_dir/'"
         if [[ -d "$src" ]]; then
-          # Copy directory contents (equivalent to your old .../server/* but safe and quote-friendly)
+          echo "Copying directory contents '$src' to '$remote:$remote_dir/'"
           scp -i "$key_path" -P "$port" -r "$src"/. "$remote:$remote_dir/"
         else
-          # Copy single file
-          scp -i "$key_path" -P "$port" "$src" "$remote:$remote_dir/"
+          if [[ -n "$target_name" ]]; then
+            echo "Copying file '$src' to '$remote:$remote_dir/$target_name'"
+            scp -i "$key_path" -P "$port" "$src" "$remote:$remote_dir/$target_name"
+          else
+            echo "Copying file '$src' to '$remote:$remote_dir/'"
+            scp -i "$key_path" -P "$port" "$src" "$remote:$remote_dir/"
+          fi
         fi

@@ -13,6 +13,54 @@ on:
         required: false
         default: "build/libs"
 
+      build_jar:
+        description: "Build and stage the jar locally instead of downloading a GitHub artifact"
+        type: boolean
+        required: false
+        default: true
+
+      build_tool:
+        description: "Build tool used for the local jar build: gradle or maven"
+        type: string
+        required: false
+        default: "gradle"
+
+      java_version:
+        description: "JDK version used for the local jar build"
+        type: string
+        required: false
+        default: "21"
+
+      java_distribution:
+        description: "JDK distribution used for the local jar build"
+        type: string
+        required: false
+        default: "zulu"
+
+      gradle_build_command:
+        description: "Gradle command used to build the jar locally without running tests"
+        type: string
+        required: false
+        default: "./gradlew --no-daemon --stacktrace clean assemble"
+
+      jar_path_pattern:
+        description: "Path pattern used to locate the locally built Gradle jar"
+        type: string
+        required: false
+        default: "build/libs/*.jar"
+
+      maven_build_command:
+        description: "Maven command used to build the jar locally without running tests"
+        type: string
+        required: false
+        default: "mvn -B -ntp --no-transfer-progress clean package -DskipTests"
+
+      maven_jar_path_pattern:
+        description: "Path pattern used to locate the locally built Maven jar"
+        type: string
+        required: false
+        default: "target/*.jar"
+
       docker_image_tag:
         type: string
         required: true
@@ -60,7 +108,74 @@ jobs:
           echo "Created: $DEST"
           ls -lah "$DEST"
 
+      - name: Set up JDK for Gradle
+        if: ${{ inputs.build_jar && inputs.build_tool == 'gradle' }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ inputs.java_version }}
+          distribution: ${{ inputs.java_distribution }}
+          cache: gradle
+
+      - name: Set up JDK for Maven
+        if: ${{ inputs.build_jar && inputs.build_tool == 'maven' }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ inputs.java_version }}
+          distribution: ${{ inputs.java_distribution }}
+          cache: maven
+
+      - name: Validate local build tool
+        if: ${{ inputs.build_jar }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${{ inputs.build_tool }}" != "gradle" && "${{ inputs.build_tool }}" != "maven" ]]; then
+            echo "::error::Unsupported build_tool='${{ inputs.build_tool }}'. Use 'gradle' or 'maven'."
+            exit 1
+          fi
+
+      - name: Build and stage Gradle jar
+        if: ${{ inputs.build_jar && inputs.build_tool == 'gradle' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ${{ inputs.gradle_build_command }}
+
+          JAR_PATH="$(ls -1 ${{ inputs.jar_path_pattern }} 2>/dev/null | grep -vE '(sources|javadoc|plain)\.jar$' | head -n 1 || true)"
+
+          if [[ -z "${JAR_PATH}" ]]; then
+            echo "ERROR: No jar found by Gradle jar path pattern='${{ inputs.jar_path_pattern }}'"
+            exit 1
+          fi
+
+          DEST="${{ inputs.jar_destination_path }}"
+          echo "Found jar: ${JAR_PATH}"
+          cp -f "${JAR_PATH}" "${DEST}/${{ inputs.github_artifact_name }}"
+          ls -lah "${DEST}/${{ inputs.github_artifact_name }}"
+
+      - name: Build and stage Maven jar
+        if: ${{ inputs.build_jar && inputs.build_tool == 'maven' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ${{ inputs.maven_build_command }}
+
+          JAR_PATH="$(ls -1 ${{ inputs.maven_jar_path_pattern }} 2>/dev/null | grep -vE '(-sources|-javadoc|-tests|-test-fixtures)\.jar$|(^|/)(original-.*)\.jar$|\.jar\.original$' | head -n 1 || true)"
+
+          if [[ -z "${JAR_PATH}" ]]; then
+            echo "ERROR: No jar found by Maven jar path pattern='${{ inputs.maven_jar_path_pattern }}'"
+            exit 1
+          fi
+
+          DEST="${{ inputs.jar_destination_path }}"
+          echo "Found jar: ${JAR_PATH}"
+          cp -f "${JAR_PATH}" "${DEST}/${{ inputs.github_artifact_name }}"
+          ls -lah "${DEST}/${{ inputs.github_artifact_name }}"
+
       - name: Download jar artifact
+        if: ${{ !inputs.build_jar }}
         uses: actions/download-artifact@v4
         with:
           name: ${{ inputs.github_artifact_name }}
